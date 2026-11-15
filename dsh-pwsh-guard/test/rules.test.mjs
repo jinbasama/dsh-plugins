@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { check, compileCustomRules, RULES } from "../lib/rules.js";
 
 /** 断言某条规则命中。 */
-function hits(cmd, id) {
-  const r = check(cmd);
+function hits(cmd, id, options = {}) {
+  const r = check(cmd, options);
   return r.hits.some((h) => h.id === id);
 }
 
@@ -35,9 +35,10 @@ test("R2 $var: 解析陷阱（作用域前缀豁免）", () => {
   assert.ok(!hits("Write-Output \"$env:PATH\"", "R2"));
 });
 
-test("R3 三元运算符", () => {
-  assert.ok(hits("$x = ($a -gt 1) ? 1 : 0", "R3"));
-  assert.ok(!hits("if ($a -gt 1) { $x = 1 } else { $x = 0 }", "R3"));
+test("R3 三元：PS 5.1 报，PS 7 放行", () => {
+  assert.ok(hits("$x = ($a -gt 1) ? 1 : 0", "R3", { ruleset: "ps51" }));
+  assert.ok(!hits("$x = ($a -gt 1) ? 1 : 0", "R3"), "PS 7 下三元合法");
+  assert.ok(!hits("if ($a -gt 1) { $x = 1 } else { $x = 0 }", "R3", { ruleset: "ps51" }));
 });
 
 test("R4 双引号内 $NAME. 路径陷阱", () => {
@@ -76,10 +77,11 @@ test("R10 裸 npm/npx/pnpm", () => {
   assert.ok(!hits("npm.cmd install react", "R10"));
 });
 
-test("R11 && / || 链（引号内豁免）", () => {
-  assert.ok(hits("git add . && git commit -m x", "R11"));
-  assert.ok(hits("a || b", "R11"));
-  assert.ok(!hits('git commit -m "a && b"', "R11"));
+test("R11 && / || 链：5.1 报，7 放行，引号内豁免", () => {
+  assert.ok(hits("git add . && git commit -m x", "R11", { ruleset: "ps51" }));
+  assert.ok(hits("a || b", "R11", { ruleset: "ps51" }));
+  assert.ok(!hits("git add . && git commit -m x", "R11"), "PS 7 下 && 合法");
+  assert.ok(!hits('git commit -m "a && b"', "R11", { ruleset: "ps51" }));
 });
 
 test("R12 ConvertTo-Json 缺 -Depth", () => {
@@ -100,10 +102,11 @@ test("R14 if/while 条件里单等号（字符串内豁免）", () => {
   assert.ok(!hits('if ($s -match "a=b") { Write-Output hi }', "R14"));
 });
 
-test("R15 PS 7+ 语法", () => {
-  assert.ok(hits("Get-Content f -AsByteStream", "R15"));
-  assert.ok(hits("$a ?? $b", "R15"));
-  assert.ok(!hits("Get-Content f -Encoding Byte", "R15"));
+test("R15 PS 7+ 语法：5.1 报，7 放行", () => {
+  assert.ok(hits("Get-Content f -AsByteStream", "R15", { ruleset: "ps51" }));
+  assert.ok(hits("$a ?? $b", "R15", { ruleset: "ps51" }));
+  assert.ok(!hits("$a ?? $b", "R15"), "PS 7 下 ?? 合法");
+  assert.ok(!hits("Get-Content f -Encoding Byte", "R15", { ruleset: "ps51" }));
 });
 
 test("R16 cmd 风格", () => {

@@ -468,15 +468,19 @@ const STEPS = [normLineEndings, stripPrompts, fixContinuations, envExport, envUn
 /**
  * 修复一段 bash 风格 / 粘贴脏文本。
  * @param {string} text
+ * @param {{ ruleset?: "ps7"|"ps51" }} [options]
+ *   PS 7 原生支持 && / ||，不再做链路拆分（拆了反而多出状态变量）。
  * @returns {{ text: string, notes: Array<{id:string,zh:string,en:string}>, changed: boolean }}
  */
-export function fix(text) {
+export function fix(text, options = {}) {
   const source = typeof text === "string" ? text : "";
+  const ps7 = options.ruleset !== "ps51";
+  const steps = ps7 ? STEPS.filter((step) => step !== splitChains) : STEPS;
   const extracted = maskHereStrings(source);
   const blocks = extracted.blocks;
   let out = extracted.masked;
   const notes = [];
-  for (const step of STEPS) {
+  for (const step of steps) {
     let res;
     try {
       res = step(out);

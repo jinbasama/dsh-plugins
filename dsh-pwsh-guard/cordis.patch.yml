@@ -30,5 +30,8 @@
         # 工具接管：replace = 在每个 agent 的可见工具里隐藏内置 pwsh，只能用 pwsh_run / run_argv；off = 不接管
         # 维护版默认 off：内置 pwsh 带沙箱提权、job 注册、工作目录确保，接管前先不换掉它。
         takeover: off
+        # 目标运行时：ps7（默认）| ps51
+        # ps7 下不再把 && / ||、三元、?? 当坑，修复器也不拆链；只有要兼容纯 5.1 目标机时才设 ps51。
+        ruleset: ps7
         # 需要临时关闭某条规则时列出，例如 ["R10", "R17"]
         disableRules: []

@@ -99,12 +99,20 @@ test("skill provider 能返回 SKILL.md 内容", async () => {
 
 test("闸门：阻断级命令 deny，并给出规则与修复命令", async () => {
   const { ctx, state } = makeHarness();
-  apply(ctx, { mode: "deny" });
+  // R11 只在 5.1 目标下成立；本用例验的是 deny 路径与修复建议，显式指定 ps51。
+  apply(ctx, { mode: "deny", ruleset: "ps51" });
   const decision = await state.gate(execWith("git add . && git commit -m x"), () => ({ kind: "allow" }));
   assert.equal(decision.kind, "deny");
   assert.match(decision.reason, /R11/);
   assert.match(decision.reason, /\$__dsh_guard_ok/);
   assert.match(decision.reason, /pwsh_run/);
+});
+
+test("闸门：PS 7 目标下 && 不再被拦", async () => {
+  const { ctx, state } = makeHarness();
+  apply(ctx, { mode: "deny" });
+  const decision = await state.gate(execWith("git add . && git commit -m x"), () => ({ kind: "allow" }));
+  assert.equal(decision.kind, "allow");
 });
 
 test("闸门：干净命令放行", async () => {
@@ -215,7 +223,8 @@ test("pwsh_check：deepCheck=off 时不跑探针", async () => {
 
 test("pwsh_run：自动修复 + UTF-8 前导 + $DSH_ARGS + 沙箱词表", async () => {
   const { ctx, state } = makeHarness({ stdout: "installed", deepPayload: OK_PAYLOAD });
-  apply(ctx, {});
+  // 本用例验证 5.1 的拆链修复，显式指定 ps51。
+  apply(ctx, { ruleset: "ps51" });
   const tool = state.tools.find((t) => t.name === "pwsh_run");
   const res = await tool.execute({ script: "npm install x && ls -la .", args: ["a'b"] }, execWith(""));
   assert.match(res.text, /npm\.cmd install x/);
@@ -576,7 +585,7 @@ test("审计：闸门拒绝 / 自动修复 / 危险拦截都会落盘，pwsh_aud
   process.env.DSH_HOME = home;
   try {
     const { ctx, state } = makeHarness();
-    apply(ctx, { deepCheck: "off" });
+    apply(ctx, { deepCheck: "off", ruleset: "ps51" });
 
     await state.gate(execWith("npm install x"), () => ({ kind: "allow" }));
     const runTool = state.tools.find((t) => t.name === "pwsh_run");

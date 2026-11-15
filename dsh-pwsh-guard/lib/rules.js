@@ -427,9 +427,9 @@ export const RULES = [
     title: { zh: "$var: 被解析为驱动器限定语法", en: "$var: parsed as drive-qualified syntax" },
     fix: { zh: "写成 ${var}: 形式，例如 ${name}: 内容", en: "Write ${var}:, e.g. ${name}: text" },
     test: r2VarColon },
-  { id: "R3", level: "blocking",
+  { id: "R3", level: "blocking", only: "ps51",
     title: { zh: "PS 5.1 没有三元运算符 ?:", en: "PS 5.1 has no ternary ?:" },
-    fix: { zh: "改用 if/else 赋值；确实需要 PS 7 时用 pwsh_run 并先确认 pwsh 可用", en: "Use if/else assignment; for PS 7 install pwsh and run via pwsh_run" },
+    fix: { zh: "改用 if/else 赋值；目标运行时是 PS 7 时可直接用 ?:", en: "Use if/else assignment; on PS 7 the ternary is fine" },
     test: r3Ternary },
   { id: "R4", level: "advisory",
     title: { zh: "双引号内 $NAME. 被当作属性访问", en: "$NAME. inside double quotes parses as property access" },
@@ -459,9 +459,9 @@ export const RULES = [
     title: { zh: "裸 npm/npx/pnpm 会命中 npm.ps1 执行策略", en: "Bare npm/npx/pnpm hits the npm.ps1 execution policy" },
     fix: { zh: "显式写 npm.cmd run ... / npx.cmd ... / pnpm.cmd ...", en: "Use npm.cmd / npx.cmd / pnpm.cmd explicitly" },
     test: r10BarePackageManager },
-  { id: "R11", level: "blocking",
+  { id: "R11", level: "blocking", only: "ps51",
     title: { zh: "PowerShell 5.1 不支持 && / || 链（引号外）", en: "PowerShell 5.1 has no && / || chains" },
-    fix: { zh: "改分行用 ;，写成 if ($LASTEXITCODE -eq 0) { ... }，或直接用 pwsh_run（内部自动拆链）", en: "Use ; / separate lines or if ($LASTEXITCODE -eq 0) { ... }; pwsh_run splits chains automatically" },
+    fix: { zh: "改分行用 ;，写成 if ($LASTEXITCODE -eq 0) { ... }；目标运行时是 PS 7 时可直接用 && / ||", en: "Use ; / separate lines, or && / || on PS 7" },
     test: r11AndOrChain },  { id: "R12", level: "advisory",
     title: { zh: "ConvertTo-Json 缺 -Depth（默认 2 会截断嵌套）", en: "ConvertTo-Json without -Depth truncates nested data" },
     fix: { zh: "加 -Depth 100", en: "Add -Depth 100" },
@@ -474,9 +474,9 @@ export const RULES = [
     title: { zh: "if/while 条件里单 = 是赋值不是比较", en: "Single = assigns instead of comparing" },
     fix: { zh: "比较用 -eq：if ($x -eq 5)", en: "Compare with -eq: if ($x -eq 5)" },
     test: r14SingleEqualsCondition },
-  { id: "R15", level: "advisory",
+  { id: "R15", level: "advisory", only: "ps51",
     title: { zh: "使用了 PS 7+ 专有语法", en: "PS 7+ only syntax detected" },
-    fix: { zh: "确认运行在 PS 7；本机 DSH 默认 PS 5.1，否则改用 5.1 等价写法", en: "Confirm PS 7; the local DSH defaults to PS 5.1" },
+    fix: { zh: "目标运行时是 PS 7 时这是合法写法；要兼容 5.1 就改用等价写法", en: "Legal on PS 7; rewrite only when 5.1 compatibility is required" },
     test: r15Ps7Only },
   { id: "R16", level: "advisory",
     title: { zh: "cmd.exe 风格命令或 %VAR% 环境变量", en: "cmd-style command or %VAR% syntax" },
@@ -564,7 +564,8 @@ export function compileCustomRules(specs) {
 /**
  * 静态检查一段 PowerShell 文本。
  * @param {string} text 命令或脚本
- * @param {{ disabled?: string[], extraRules?: Array }} [options] 跳过的规则 id 与外部规则
+ * @param {{ disabled?: string[], extraRules?: Array, ruleset?: "ps7"|"ps51" }} [options]
+ *   ruleset 表示目标运行时：ps7（默认）下跳过只对 5.1 成立的规则（三元、&&/||、7 专有语法）。
  * @returns {{ hits: Array, blocking: Array, advisory: Array }}
  */
 export function check(text, options = {}) {
@@ -576,7 +577,9 @@ export function check(text, options = {}) {
   const cmd = maskComments(maskHereStrings(raw).masked);
   const extra = Array.isArray(options.extraRules) ? options.extraRules : [];
   const activeRules = extra.length > 0 ? RULES.concat(extra) : RULES;
+  const ps7 = options.ruleset !== "ps51";
   for (const rule of activeRules) {
+    if (ps7 && rule.only === "ps51") continue;
     if (disabled.has(rule.id)) continue;
     let matched = false;
     try {

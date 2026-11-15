@@ -51,7 +51,7 @@ function loadCustomRules() {
 
 const CANDIDATE = {
   name: "pwsh-guard",
-  description: "在 Windows 上写/执行 PowerShell 之前必读：本机 DSH 实际运行 Windows PowerShell 5.1，先查坑再执行；优先用 pwsh_run 绕开引号与编码问题，原生程序用 run_argv。",
+  description: "在 Windows 上写/执行 PowerShell 之前必读：本机 pwsh 7 已在 PATH，内置 pwsh 与 pwsh_run 都走 PS 7；先查坑再执行，含引号/中文/多行时优先 pwsh_run，原生程序用 run_argv。",
   invocation: { modelInvocable: true, userInvocable: true },
   provider: PROVIDER_NAME,
   source: "bundled",
@@ -89,7 +89,10 @@ function normalizeConfig(config = {}) {
   const analyzer = config.analyzer === "psscriptanalyzer" ? "psscriptanalyzer" : "builtin";
   const outputGuard = config.outputGuard !== false;
   const takeover = config.takeover === "replace" ? "replace" : "off";
-  return { mode, lang, disabled, autoFix, shell, deepCheck: deepCheckMode, analyzer, outputGuard, takeover };
+  // 目标运行时：本机 pwsh 已在 PATH，内置 pwsh 工具与 pwsh_run 都走 PS 7，
+  // 所以默认按 7 判规则；要兼容只有 5.1 的目标机时显式配 ruleset: ps51。
+  const ruleset = config.ruleset === "ps51" ? "ps51" : "ps7";
+  return { mode, lang, disabled, autoFix, shell, deepCheck: deepCheckMode, analyzer, outputGuard, takeover, ruleset };
 }
 
 /** 从 pwsh 工具调用参数里取出命令文本。 */
@@ -221,7 +224,7 @@ export function apply(ctx, config = {}) {
     const command = commandOf(exec);
     if (command.trim().length === 0) return next();
 
-    const result = check(command, { disabled: cfg.disabled, extraRules });
+    const result = check(command, { disabled: cfg.disabled, extraRules, ruleset: cfg.ruleset });
     if (result.blocking.length === 0) {
       if (cfg.deepCheck === "all") {
         const deep = await deepCheck(ctx, exec, command, { pssa: cfg.analyzer === "psscriptanalyzer", shell: cfg.shell });
@@ -250,7 +253,7 @@ export function apply(ctx, config = {}) {
     }
 
     appendAudit({ event: "deny", rules: result.blocking.map((h) => h.id), mode: cfg.mode, agent: agentIdOf(exec), command: clipCommand(command) });
-    const fixed = cfg.autoFix ? fix(command) : { text: command, notes: [] };
+    const fixed = cfg.autoFix ? fix(command, { ruleset: cfg.ruleset }) : { text: command, notes: [] };
     const reason = [
       (zh ? "dsh-pwsh-guard：检测到 " : "dsh-pwsh-guard: ") + result.blocking.length + (zh ? " 个阻断级 PowerShell 坑位，已阻止执行：" : " blocking PowerShell pitfall(s); execution blocked:"),
       formatHits(result.blocking, cfg.lang),
@@ -318,11 +321,11 @@ export function apply(ctx, config = {}) {
         if (typeof item !== "string") throw new Error("args 的每个元素必须是字符串");
       }
       const doFix = args.fix === undefined ? cfg.autoFix : args.fix !== false;
-      const fixed = doFix ? fix(script) : { text: script, notes: [] };
+      const fixed = doFix ? fix(script, { ruleset: cfg.ruleset }) : { text: script, notes: [] };
       if (fixed.notes.length > 0) {
         appendAudit({ event: "fix", transforms: fixed.notes.map((n) => n.id), agent: agentIdOf(exec), command: clipCommand(fixed.text) });
       }
-      const result = check(fixed.text, { disabled: cfg.disabled, extraRules });
+      const result = check(fixed.text, { disabled: cfg.disabled, extraRules, ruleset: cfg.ruleset });
       const header = [];
       if (fixed.notes.length > 0) {
         header.push(reportNotes(fixed.notes, cfg.lang));
@@ -417,7 +420,7 @@ export function apply(ctx, config = {}) {
     execute: async (args, exec) => {
       const script = args && args.script;
       if (typeof script !== "string" || script.trim().length === 0) throw new Error("script 必须是非空字符串");
-      const result = check(script, { disabled: cfg.disabled, extraRules });
+      const result = check(script, { disabled: cfg.disabled, extraRules, ruleset: cfg.ruleset });
       const lines = [];
       if (cfg.deepCheck !== "off") {
         const deep = await deepCheck(ctx, exec, script, { pssa: cfg.analyzer === "psscriptanalyzer", shell: cfg.shell });
@@ -451,7 +454,7 @@ export function apply(ctx, config = {}) {
         lines.push(formatDanger(dangerInfo.reasons, cfg.lang));
       }
       if (args.fix) {
-        const fixed = fix(script);
+        const fixed = fix(script, { ruleset: cfg.ruleset });
         if (fixed.changed) {
           lines.push("", zh ? "修复后（可直接执行）：" : "Fixed version:", "```powershell", fixed.text, "```");
         }

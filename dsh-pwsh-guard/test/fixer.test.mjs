@@ -52,21 +52,28 @@ test("正确 PowerShell 原样通过", () => {
   }
 });
 
-test("&& / || 链拆分：逐段捕获状态，|| 分支不再是死代码", () => {
-  const r1 = fix("git add . && git commit -m x");
+test("&& / || 链拆分（仅 5.1 目标）：逐段捕获状态，|| 分支不再是死代码", () => {
+  const opts = { ruleset: "ps51" };
+  const r1 = fix("git add . && git commit -m x", opts);
   assert.ok(r1.text.includes("$__dsh_guard_ok = $?"), r1.text);
   assert.ok(r1.text.includes("if ($__dsh_guard_ok)"), r1.text);
   assert.ok(!r1.text.includes("if ($?)"), "不应再生成读旧 $? 的 if 块：" + r1.text);
-  const r2 = fix("npm install x && ls -la .");
+  const r2 = fix("npm install x && ls -la .", opts);
   assert.ok(r2.text.includes("npm.cmd install x"), r2.text);
   assert.ok(r2.text.includes("Get-ChildItem . -Force"), r2.text);
-  const r3 = fix("rm -rf a || ls -la");
+  const r3 = fix("rm -rf a || ls -la", opts);
   assert.ok(r3.text.includes("if (-not $__dsh_guard_ok)"), r3.text);
   assert.ok(r3.text.includes("Remove-Item a -Recurse -Force"), r3.text);
 });
 
+test("PS 7 目标下不拆链：&& / || 原样保留", () => {
+  const r = fix("git add . && git commit -m x");
+  assert.ok(r.text.includes("&&"), r.text);
+  assert.ok(!r.text.includes("$__dsh_guard_ok"), r.text);
+});
+
 test("&& / || 拆分在真实 PS 5.1 下的语义与 bash 一致", { skip: process.platform !== "win32" }, () => {
-  const script = fix("cmd /c exit 1 || Write-Output RAN").text;
+  const script = fix("cmd /c exit 1 || Write-Output RAN", { ruleset: "ps51" }).text;
   const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
   assert.match(out, /RAN/, "|| 分支应在前一段失败时执行，实际输出：" + out);
 });

@@ -1,16 +1,17 @@
 ---
 name: pwsh-guard
-description: 在 Windows 上写或执行 PowerShell 之前必读。本机 DSH 实际运行 Windows PowerShell 5.1；先查坑再执行，优先用 pwsh_run 绕开引号与编码问题，原生程序用 run_argv。
+description: 在 Windows 上写或执行 PowerShell 之前必读。本机 pwsh 7 已在 PATH，内置 pwsh 工具与 pwsh_run 都走 PS 7；先查坑再执行，优先用 pwsh_run 绕开引号与编码问题，原生程序用 run_argv。
 ---
 
 # PowerShell 守门规范（dsh-pwsh-guard）
 
 ## 0. 本机事实（先记住）
 
-- DSH 的 `pwsh` 工具在这台机器上实际执行的是 **Windows PowerShell 5.1**（`powershell.exe`），不是 PowerShell 7。
-- 控制台代码页是 936（GBK）：中文与原生程序输出容易乱码；插件内置的 `pwsh_run` 会强制 UTF-8 前导。
+- 本机装了 **PowerShell 7.6.7**（`D:\DSH-Env\pwsh\pwsh.exe`，已在 PATH）。DSH 内置 `pwsh` 工具与插件的 `pwsh_run` 都走它，规则默认按 PS 7 判（`ruleset: ps7`）。
+- 只有在目标机没有 pwsh、或要写必须兼容 Windows PowerShell 5.1 的脚本时，才把 `ruleset` 设成 `ps51`；那时三元、`&&`/`||`、`??` 都会变成坑。
+- 控制台代码页是 936（GBK）：中文与原生程序输出容易乱码；`pwsh_run` 会强制 UTF-8 前导。
 - 只读沙箱下 PowerShell 运行在 ConstrainedLanguage：`.NET` 静态调用、`Add-Type`、COM 会直接失败。
-- 由此推出：没有三元 `?:`；没有 `&&` / `||`；没有 `??` / `?.`；`-AsHashtable` 等 7+ 参数不存在；`npm` / `npx` / `pnpm` 要写 `npm.cmd` / `npx.cmd` / `pnpm.cmd`。
+- `npm` / `npx` / `pnpm` 在 PowerShell 里仍建议写 `npm.cmd` / `npx.cmd` / `pnpm.cmd`，避免命中 `npm.ps1` 的执行策略。
 
 ## 1. 该用哪个工具
 
@@ -33,12 +34,12 @@ description: 在 Windows 上写或执行 PowerShell 之前必读。本机 DSH �
 ### 硬错误（blocking，命中会被拒绝执行）
 
 - **R2** `$var:` 会被解析成驱动器语法。要写 `${var}:`；`$env:` 这类作用域前缀是安全的。
-- **R3** PS 5.1 没有三元 `?:`。用 `if/else` 赋值。
+- **R3**（仅 5.1 目标）PS 5.1 没有三元 `?:`，用 `if/else` 赋值；PS 7 下直接用。
 - **R5** `Start-Process` 包外部命令时引号规则极其别扭。直接 `& exe arg`。
 - **R6** `-FeatureName A, B` 不是数组。用 `foreach` 每次传一个。
 - **R7** DISM 没有 `/Dismount-Image`，正确写法是 `/Unmount-Image`。
 - **R10** 裸 `npm` / `npx` / `pnpm` 会命中 `npm.ps1` 执行策略。写 `npm.cmd`。
-- **R11** PS 5.1 不支持 `&&` / `||`。用 `;`、分行，或 `if ($LASTEXITCODE -eq 0) { ... }`。
+- **R11**（仅 5.1 目标）PS 5.1 不支持 `&&` / `||`；PS 7 下合法，不要拆。
 - **R14** `if ($x = 5)` 是赋值不是比较（条件恒真）。比较用 `-eq`。
 
 ### 容易出错（advisory，会提示但放行）
@@ -49,7 +50,7 @@ description: 在 Windows 上写或执行 PowerShell 之前必读。本机 DSH �
 - **R9** `curl -L` 不要和 `-C -` 混用。
 - **R12** `ConvertTo-Json` 默认 `-Depth 2` 会截断嵌套，加 `-Depth 100`。
 - **R13** `foreach ($x in ...)` 里 `$_` 不是循环变量。
-- **R15** 不要用 PS 7+ 专有语法（本机是 5.1）。
+- **R15**（仅 5.1 目标）不要用 PS 7+ 专有语法；本机是 7，`??`、`?.`、`-AsByteStream` 都正常。
 - **R16** 不要写 cmd 风格（`del`、`copy`、`%VAR%`）。
 - **R17** `Write-Host` 输出不进管道；要捕获结果用 `Write-Output`。
 - **R18** 文本里出现乱码痕迹时重新生成；`.ps1` 用 UTF-8 with BOM 保存。
