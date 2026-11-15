@@ -24,8 +24,8 @@ function makeHarness(overrides = {}) {
       else text = overrides.stdout === undefined ? "hello" : overrides.stdout;
       return {
         collected: {
-          stdout: { readFrom: () => ({ text, truncated: false }) },
-          stderr: { readFrom: () => ({ text: overrides.stderr || "", truncated: false }) },
+          stdout: { readFrom: () => ({ text: text, lossy: false, nextOffset: undefined }) },
+          stderr: { readFrom: () => ({ text: overrides.stderr || "", lossy: false, nextOffset: undefined }) },
         },
         done: Promise.resolve({ exitCode: overrides.exitCode === undefined ? 0 : overrides.exitCode }),
       };
@@ -284,6 +284,37 @@ test("pwsh_run：超过命令行上限时明确报错且不 spawn", async () => 
   }
   assert.match(text, /脚本过长/);
   assert.equal(state.spawns.length, 0);
+});
+
+test("输出收集：分段 reader 的每一段都要合并，不能只取首段", async () => {
+  const chunks = ["LINE1\n", "LINE2\n", "LINE3\n"];
+  const { ctx, state } = makeHarness({
+    subprocess: {
+      async resolveExecutable(name) {
+        return "C:\\fake\\" + name;
+      },
+      spawn() {
+        return {
+          collected: {
+            stdout: {
+              readFrom(offset) {
+                if (offset >= chunks.length) return { text: "", nextOffset: offset };
+                return { text: chunks[offset], nextOffset: offset + 1 };
+              },
+            },
+            stderr: { readFrom: () => ({ text: "", nextOffset: 0 }) },
+          },
+          done: Promise.resolve({ exitCode: 0 }),
+        };
+      },
+    },
+  });
+  apply(ctx, { deepCheck: "off" });
+  const tool = state.tools.find((t) => t.name === "pwsh_run");
+  const res = await tool.execute({ script: "Write-Output 1", fix: false }, execWith(""));
+  assert.match(res.text, /LINE1/);
+  assert.match(res.text, /LINE2/);
+  assert.match(res.text, /LINE3/);
 });
 
 test("run_argv：argv 逐字传递，不经 shell", async () => {

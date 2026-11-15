@@ -184,9 +184,26 @@ export async function confine(ctx, exec, argv) {
 
 function collect(reader) {
   // DSH 的 SubprocessOutputRead 字段是 { text, nextOffset, lossy, spillPath }，没有 truncated。
+  // 真实 reader 是分段返回的：只调一次 readFrom(0) 只能拿到第一段，
+  // 多行输出会被静默截成首行（上游 bug，测试的假 reader 一次性返回所以没暴露）。
   if (reader === undefined) return { text: "", lossy: false, spillPath: undefined };
   try {
-    return reader.readFrom(0);
+    let text = "";
+    let offset = 0;
+    let lossy = false;
+    let spillPath;
+    for (let guard = 0; guard < 100000; guard++) {
+      const chunk = reader.readFrom(offset);
+      if (chunk === undefined || chunk === null || typeof chunk.text !== "string") break;
+      text += chunk.text;
+      if (chunk.lossy) lossy = true;
+      if (chunk.spillPath !== undefined) spillPath = chunk.spillPath;
+      const next = chunk.nextOffset;
+      // nextOffset 不前进即视为已读完，避免 reader 行为异常时死循环。
+      if (typeof next !== "number" || next <= offset) break;
+      offset = next;
+    }
+    return { text, lossy, spillPath };
   } catch {
     return { text: "", lossy: false, spillPath: undefined };
   }
