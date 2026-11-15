@@ -13,8 +13,12 @@
 
 const NL = "\n";
 
-/** 单 argv 内联脚本的长度上限（保守值，Windows CreateProcess 约 32K）。 */
-const MAX_INLINE_BYTES = 24000;
+/**
+ * Windows CreateProcess 的整条命令行上限是 32767 字符，这里留出环境变量与前导的余量。
+ * 注意不能只按脚本体字节数判断：base64(UTF-16LE) 是原文的 2.67 倍，
+ * 24000 字节的脚本体编码后约 64000 字符，必然 spawn ENAMETOOLONG。
+ */
+const MAX_COMMAND_LINE = 30000;
 const MAX_OUTPUT_BYTES = 64000;
 const MAX_SPILL_BYTES = 67108864;
 const GRACE_MS = 3000;
@@ -46,13 +50,28 @@ export function toEncodedCommand(script) {
   return Buffer.from(String(script), "utf16le").toString("base64");
 }
 
-/** 组装 argv：默认 -Command 单参数；超长时切 -EncodedCommand。 */
+/** 保守估算整个命令行的字符数（各 argv 元素 + 空格与可能的引号）。 */
+function argvLength(argv) {
+  let total = 0;
+  for (const part of argv) total += String(part).length + 3;
+  return total;
+}
+
+/**
+ * 组装 argv：脚本作为单个 -Command 参数直传。
+ *
+ * 这里不再自动切 -EncodedCommand：base64(UTF-16LE) 是原文的 2.67 倍，
+ * 编码后的命令行只会比 -Command 更长，永远装不下更多脚本，超限时只会得到
+ * spawn ENAMETOOLONG 这种看不懂的报错。超限时改为明确告知处理办法。
+ */
 export function buildPowerShellArgv(shell, script) {
-  const base = [shell, "-NoLogo", "-NoProfile", "-NonInteractive"];
-  if (Buffer.byteLength(script, "utf8") > MAX_INLINE_BYTES) {
-    return base.concat(["-EncodedCommand", toEncodedCommand(script)]);
-  }
-  return base.concat(["-Command", script]);
+  const argv = [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script];
+  const total = argvLength(argv);
+  if (total <= MAX_COMMAND_LINE) return argv;
+  throw new Error(
+    "脚本过长：整条命令行约 " + total + " 字符，超过 Windows 上限 " + MAX_COMMAND_LINE
+      + "。请把脚本写成 .ps1 文件再执行，或拆成多次调用。"
+  );
 }
 
 export function sessionOf(exec) {
@@ -130,7 +149,7 @@ export async function resolveShell(ctx, exec, preferred) {
  * danger-full-access 不包装（ACL runner 本身拒绝该模式）；
  * 受限模式下包装失败必须 fail closed，绝不静默放开。
  */
-export function confine(ctx, exec, argv) {
+export async function confine(ctx, exec, argv) {
   const sandbox = ctx.get("sandbox");
   const policyService = ctx.get("sandboxPolicy");
   if (sandbox === undefined || policyService === undefined) return { argv, note: "" };
@@ -145,10 +164,14 @@ export function confine(ctx, exec, argv) {
   const mode = String(policy.mode);
   if (mode === "danger-full-access") return { argv, note: "" };
   try {
-    const confined = sandbox.confine(argv, policy);
-    const wrapped = confined && confined.argv;
-    const next = Array.isArray(wrapped) && wrapped.length > 0 ? wrapped.slice() : argv;
-    const enforcement = confined && confined.enforcement;
+    // DSH 的 SandboxProvider.confine 返回 Promise<ConfinedArgv>，必须 await；
+    // 直接取 .argv 会拿到 undefined，然后静默回退成未受限 argv。
+    const confined = await sandbox.confine(argv, policy);
+    if (confined === undefined || confined === null || !Array.isArray(confined.argv) || confined.argv.length === 0) {
+      throw new Error("沙箱没有返回可用的受限 argv");
+    }
+    const next = confined.argv.slice();
+    const enforcement = confined.enforcement;
     const note = typeof enforcement === "string" && enforcement.length > 0 && enforcement !== "full"
       ? "[sandbox: enforcement '" + enforcement + "' under " + mode + " mode]"
       : "";
@@ -160,11 +183,12 @@ export function confine(ctx, exec, argv) {
 }
 
 function collect(reader) {
-  if (reader === undefined) return { text: "", truncated: false, spillPath: undefined };
+  // DSH 的 SubprocessOutputRead 字段是 { text, nextOffset, lossy, spillPath }，没有 truncated。
+  if (reader === undefined) return { text: "", lossy: false, spillPath: undefined };
   try {
     return reader.readFrom(0);
   } catch {
-    return { text: "", truncated: false, spillPath: undefined };
+    return { text: "", lossy: false, spillPath: undefined };
   }
 }
 
@@ -175,7 +199,7 @@ function collect(reader) {
 export async function runProcess(ctx, exec, argv, cwd, options = {}) {
   const subprocess = ctx.subprocess;
   if (subprocess === undefined) throw new Error("subprocess 服务不可用");
-  const confined = options.confine === false ? { argv, note: "" } : confine(ctx, exec, argv);
+  const confined = options.confine === false ? { argv, note: "" } : await confine(ctx, exec, argv);
 
   const env = { NO_COLOR: "1", PAGER: "cat", GIT_PAGER: "cat" };
   const managed = dshEnvironment(ctx, exec);
@@ -214,8 +238,8 @@ export async function runProcess(ctx, exec, argv, cwd, options = {}) {
   if (outText.length > 0) parts.push(outText);
   else if (errText.length === 0) parts.push("(no output)");
   if (errText.length > 0) parts.push("[stderr]" + NL + errText);
-  if (stdout.truncated && stdout.spillPath) parts.push("[output truncated; full output: " + stdout.spillPath + "]");
-  if (stderr.truncated && stderr.spillPath) parts.push("[stderr truncated; full stderr: " + stderr.spillPath + "]");
+  if (stdout.lossy && stdout.spillPath) parts.push("[output truncated; full output: " + stdout.spillPath + "]");
+  if (stderr.lossy && stderr.spillPath) parts.push("[stderr truncated; full stderr: " + stderr.spillPath + "]");
   if (confined.note.length > 0) parts.push(confined.note);
   const exitCode = outcome && typeof outcome.exitCode === "number" ? outcome.exitCode : null;
   const signalName = outcome && outcome.signal ? String(outcome.signal) : "";

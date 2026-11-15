@@ -1,7 +1,7 @@
 # dsh-pwsh-guard bundle patch：把插件行挂进 profile 名册。
 #
 # 安装（开发态本地 link）：
-#   dsh plugin --profile desktop add link:D:/Agent/DSH/plugins/dsh-pwsh-guard
+#   dsh plugin --profile desktop add link:D:/lgc/Documents/deepseek-harness/default-workspace/dsh-plugins/dsh-pwsh-guard
 # 安装（发布后）：
 #   dsh plugin --profile <name> add dsh-pwsh-guard
 #
@@ -11,7 +11,8 @@
       name: dsh-pwsh-guard
       config:
         # deny = 命中阻断级规则时拒绝执行并返回修复建议；warn = 只记日志放行；off = 关闭闸门
-        mode: deny
+        # 维护版默认 warn：规则集按 5.1 写，本机 pwsh_run 可能走 pwsh 7，先用 warn 观察误报。
+        mode: warn
         # zh | en
         lang: zh
         # pwsh_run 默认自动修复 bash 风格写法
@@ -22,10 +23,12 @@
         #   off = 关闭；run = 只在 pwsh_run / pwsh_check 里做（默认）；all = 连 pwsh 闸门也做
         deepCheck: run
         # builtin = 只用内置 AST；psscriptanalyzer = 额外跑 PSScriptAnalyzer（未安装则自动跳过）
-        analyzer: psscriptanalyzer
+        # 维护版默认 builtin：避免 pwsh_check 反复引导联网安装模块。
+        analyzer: builtin
         # 内置 pwsh 输出疑似乱码时追加提示
         outputGuard: true
         # 工具接管：replace = 在每个 agent 的可见工具里隐藏内置 pwsh，只能用 pwsh_run / run_argv；off = 不接管
-        takeover: replace
+        # 维护版默认 off：内置 pwsh 带沙箱提权、job 注册、工作目录确保，接管前先不换掉它。
+        takeover: off
         # 需要临时关闭某条规则时列出，例如 ["R10", "R17"]
         disableRules: []

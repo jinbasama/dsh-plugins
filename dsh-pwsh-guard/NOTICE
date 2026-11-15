@@ -13,3 +13,17 @@ dsh-pwsh-guard 的规则表、修复策略与执行形态融合自以下公开�
 本插件新增的规则（R20–R22）来自本机实测：Windows PowerShell 5.1 + ConstrainedLanguage 只读沙箱 + 原生程序吞引号的组合环境。
 
 如果原项目作者希望调整署名方式，请提 issue。
+
+## 维护分支改动（jinbasama/dsh-plugins，maintain/p0）
+
+自 2026-11-15 起在本地 fork 维护，上游 `QHX-BNU/dsh-plugins` 仅作参考，不跟随更新。
+
+| 文件 | 改动 | 原因 |
+| --- | --- | --- |
+| lib/exec.js | `confine` 改为 async 并 `await` SandboxProvider.confine；返回空 argv 直接失败 | 上游同步实现拿到的是 Promise，`.argv` 为 undefined，受限模式下静默跳过沙箱 |
+| lib/exec.js | 移除 `-EncodedCommand` 自动切换；命令行超 30000 字符明确报错 | base64(UTF-16LE) 是原文的 2.67 倍，编码后必然 spawn ENAMETOOLONG |
+| lib/exec.js | 输出截断判断改用 `lossy` 字段 | SubprocessOutputRead 没有 `truncated` 字段，截断提示原本是死代码 |
+| lib/rules.js | 检查前屏蔽注释；R2 只屏蔽单引号；R10 只看代码区 | 原实现把单引号/注释里的 `$var:`、`npm`、三元当成 blocking 误报 |
+| lib/rules.js | KNOWN_SCOPES 移除 12 个自动变量 | `$PID` / `$args` / `$_` 等不是作用域前缀，白名单导致 R2 漏报 |
+| cordis.patch.yml | 默认 `mode: warn`、`analyzer: builtin`、`takeover: off` | 原 bundle 默认 deny/replace 会立即接管并拦截，与 README 声明的默认值矛盾 |
+| test/ | 沙箱假实现改为 async；补 fail-closed、命令行长度、引号与注释用例 | 旧的同步假实现掩盖了沙箱缺陷，测试全绿不代表契约正确 |

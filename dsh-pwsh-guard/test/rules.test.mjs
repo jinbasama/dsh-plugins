@@ -160,3 +160,34 @@ test("blocking / advisory 分级正确", () => {
   assert.ok(r.blocking.some((h) => h.id === "R10"));
   assert.ok(r.advisory.some((h) => h.id === "R17"));
 });
+
+// —— 引号与注释：这些文本不会被 PowerShell 执行，不能命中 blocking 规则 ——
+
+test("单引号字面量不触发 R2", () => {
+  clean("Write-Output '$name: hi'");
+});
+
+test("注释不触发 R2 / R3 / R10", () => {
+  clean("# $name: later\nGet-Date");
+  clean("# 用 npm 安装\nGet-Date");
+  clean("# 不要写 ) ? a : b\nGet-Date");
+});
+
+test("双引号里的普通文本不触发 R10", () => {
+  clean('Write-Output "请运行 npm install"');
+});
+
+test("双引号里的 $var: 仍是真实陷阱，要报 R2", () => {
+  assert.ok(hits('Write-Output "$name: hi"', "R2"));
+});
+
+test("自动变量不是作用域前缀，$PID: 之类要报 R2", () => {
+  assert.ok(hits('Write-Output "$PID: hi"', "R2"));
+  assert.ok(hits('Write-Output "$args: hi"', "R2"));
+});
+
+test("合法作用域前缀与 here-string 里的数据仍然放行", () => {
+  clean('Write-Output "$env:PATH"');
+  clean("$script:x = 1");
+  clean("@'\n$name: hi\n'@");
+});

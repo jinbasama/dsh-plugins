@@ -9,7 +9,7 @@
 | 静态检查 + 拦截 | chaggle/dsh-powershell-check | `tools/pre-execute` 闸门（命中阻断级规则 → deny + 修复建议） |
 | 自动修复 | GuTianshuo/powershell-fix | `fixer`：行卫生 + bash 语义转换 + 命令 shim（幂等） |
 | 免转义结构化执行 | fengbai2233/dsh-pwsh-quoting-guard | `pwsh_run` / `run_argv`：正文单 argv、数据走 `$DSH_ARGS`、argv 直传 |
-| 超长脚本兜底 | sryimnoob123/dsh-tool-pwsh-safe | 脚本超过 24KB 自动切 `-EncodedCommand` |
+| 超长脚本处理 | sryimnoob123/dsh-tool-pwsh-safe | 原思路是切 `-EncodedCommand`；实测编码后命令行更长，改为超限时明确报错 |
 | 真语法校验 | 自研 | AST 解析（PowerShell 内置 Parser），给出带行列的语法错误 |
 | 工具接管 | 自研 | per-agent restriction 隐藏内置 pwsh（`takeover: replace`） |
 | 分析器管理 | 自研 | `pwsh_analyzer` 检测/一键安装 PSScriptAnalyzer |
@@ -222,7 +222,7 @@ npm run check     # 四个模块的语法检查
 ```
 lib/rules.js    22 条静态检查规则 + check() / formatHits()
 lib/fixer.js    行卫生 + bash->PowerShell 转换 + 命令 shim，fix() / formatNotes()
-lib/exec.js     UTF-8 前导、$DSH_ARGS 绑定、-EncodedCommand 兜底、沙箱 confine、输出渲染
+lib/exec.js     UTF-8 前导、$DSH_ARGS 绑定、命令行长度上限、异步沙箱 confine、输出渲染
 lib/index.js    插件入口：pre-execute 闸门 + pwsh_run / pwsh_check / run_argv + skill provider
 test/           规则、修复器、假 ctx 集成测试（全部离线可跑）
 SKILL.md        给模型的规范（由 skill provider 提供）

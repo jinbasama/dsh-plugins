@@ -258,13 +258,32 @@ test("pwsh_run：force=true 跳过检查并执行", async () => {
   assert.equal(state.spawns.length, 1);
 });
 
-test("pwsh_run：超长脚本切 -EncodedCommand", async () => {
+test("pwsh_run：命令行装得下的脚本直接走 -Command", async () => {
   const { ctx, state } = makeHarness();
   apply(ctx, { deepCheck: "off" });
   const tool = state.tools.find((t) => t.name === "pwsh_run");
-  const long = "Write-Output 'x'\n".repeat(3000);
+  const long = "Write-Output 'x'\n".repeat(1000);
   await tool.execute({ script: long, fix: false }, execWith(""));
-  assert.ok(state.spawns[0].argv.includes("-EncodedCommand"));
+  const argv = state.spawns[0].argv;
+  assert.ok(!argv.includes("-EncodedCommand"));
+  const total = argv.reduce((n, part) => n + String(part).length + 3, 0);
+  assert.ok(total <= 30000, "命令行 " + total + " 字符超过 Windows 上限");
+});
+
+test("pwsh_run：超过命令行上限时明确报错且不 spawn", async () => {
+  const { ctx, state } = makeHarness();
+  apply(ctx, { deepCheck: "off" });
+  const tool = state.tools.find((t) => t.name === "pwsh_run");
+  const huge = "x".repeat(40000);
+  let text = "";
+  try {
+    const res = await tool.execute({ script: huge, fix: false }, execWith(""));
+    text = res && res.text ? res.text : "";
+  } catch (error) {
+    text = error && error.message ? error.message : String(error);
+  }
+  assert.match(text, /脚本过长/);
+  assert.equal(state.spawns.length, 0);
 });
 
 test("run_argv：argv 逐字传递，不经 shell", async () => {
@@ -275,13 +294,13 @@ test("run_argv：argv 逐字传递，不经 shell", async () => {
   assert.deepEqual(state.spawns[0].argv, ["C:\\fake\\git", "commit", "-m", 'a"b']);
 });
 
-test("沙箱缺少时直接运行；有 sandbox 时走 confine", async () => {
+test("沙箱缺少时直接运行；有 sandbox 时走 confine（真实契约是异步）", async () => {
   const confined = [];
   const { ctx, state } = makeHarness({
     services: {
       sandboxPolicy: { resolve: () => ({ mode: "workspace-write", workspaceRoot: "D:\\ws" }) },
       sandbox: {
-        confine: (argv, policy) => {
+        confine: async (argv, policy) => {
           confined.push(policy.mode);
           return { argv: ["WRAP"].concat(argv), enforcement: "partial" };
         },
@@ -293,6 +312,47 @@ test("沙箱缺少时直接运行；有 sandbox 时走 confine", async () => {
   await tool.execute({ program: "git", args: ["status"] }, execWith(""));
   assert.deepEqual(confined, ["workspace-write"]);
   assert.equal(state.spawns[0].argv[0], "WRAP");
+});
+
+test("沙箱返回空 argv 时 fail closed，不执行未受限命令", async () => {
+  const { ctx, state } = makeHarness({
+    services: {
+      sandboxPolicy: { resolve: () => ({ mode: "workspace-write", workspaceRoot: "D:\\ws" }) },
+      sandbox: { confine: async () => ({}) },
+    },
+  });
+  apply(ctx, {});
+  const tool = state.tools.find((t) => t.name === "run_argv");
+  let text = "";
+  try {
+    const res = await tool.execute({ program: "git", args: ["status"] }, execWith(""));
+    text = res && res.text ? res.text : "";
+  } catch (error) {
+    text = error && error.message ? error.message : String(error);
+  }
+  assert.match(text, /沙箱包装失败/);
+  assert.equal(state.spawns.length, 0);
+});
+
+test("沙箱 confine 抛错时拒绝执行（fail closed）", async () => {
+  const { ctx, state } = makeHarness({
+    services: {
+      sandboxPolicy: { resolve: () => ({ mode: "workspace-write", workspaceRoot: "D:\\ws" }) },
+      sandbox: { confine: async () => { throw new Error("runner missing"); } },
+    },
+  });
+  apply(ctx, {});
+  const tool = state.tools.find((t) => t.name === "run_argv");
+  let text = "";
+  try {
+    const res = await tool.execute({ program: "git", args: ["status"] }, execWith(""));
+    text = res && res.text ? res.text : "";
+  } catch (error) {
+    text = error && error.message ? error.message : String(error);
+  }
+  assert.match(text, /沙箱包装失败/);
+  assert.match(text, /runner missing/);
+  assert.equal(state.spawns.length, 0);
 });
 
 test("接管：takeover=replace 时在 agent scope 上隐藏 pwsh（可卸载）", () => {

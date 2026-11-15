@@ -14,11 +14,14 @@
 
 const NL = "\n";
 
-/** $env: 这类合法作用域前缀，不算 R2 的 $var: 解析陷阱。 */
+/**
+ * $env: / $script: 这类合法作用域前缀，不算 R2 的 $var: 解析陷阱。
+ * 注意：$PID / $true / $args / $_ / $PSScriptRoot 等是自动变量，不是作用域前缀。
+ * 把它们放进来会让 "$PID: hi" 漏报——PS 5.1 对这句实测报
+ * "':' was not followed by a valid variable name character"。
+ */
 const KNOWN_SCOPES = new Set([
   "env", "script", "global", "local", "private", "using", "function", "variable",
-  "PSDefaultParameterValues", "PSScriptRoot", "PSCommandPath", "PSCmdlet", "PID",
-  "true", "false", "null", "args", "input", "this", "_",
 ]);
 
 function isWordChar(c) {
@@ -163,6 +166,57 @@ export function blankQuoted(text) {
   return out;
 }
 
+/**
+ * 把注释替换为空格（保留长度与换行），让规则只检查代码区。
+ * PowerShell 里 # 只有在 token 起始位置才开注释，所以 URL 片段里的 # 不算。
+ */
+export function maskComments(text) {
+  const src = String(text);
+  let out = "";
+  let i = 0;
+  let quote = "";
+  while (i < src.length) {
+    const c = src[i];
+    if (quote === "") {
+      if (c === "#" && (i === 0 || /[\s;&|({]/.test(src[i - 1]))) {
+        while (i < src.length && src[i] !== "\n") { out += " "; i++; }
+        continue;
+      }
+      if (c === "'" || c === '"') { quote = c; out += c; i++; continue; }
+      out += c; i++; continue;
+    }
+    if (quote === "'") {
+      if (c === "'" && src[i + 1] === "'") { out += "''"; i += 2; continue; }
+      if (c === "'") quote = "";
+      out += c; i++; continue;
+    }
+    if (c === "`") { out += c + (src[i + 1] || ""); i += 2; continue; }
+    if (c === '"') quote = "";
+    out += c; i++;
+  }
+  return out;
+}
+
+/**
+ * 把单引号字面量替换为空格（保留长度）。
+ * 单引号里不解析变量，所以 R2 要看双引号内容、不看单引号内容。
+ */
+export function maskSingleQuoted(text) {
+  const src = String(text);
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src[i] !== "'") { out += src[i]; i++; continue; }
+    out += " "; i++;
+    while (i < src.length) {
+      if (src[i] === "'" && src[i + 1] === "'") { out += "  "; i += 2; continue; }
+      if (src[i] === "'") { out += " "; i++; break; }
+      out += " "; i++;
+    }
+  }
+  return out;
+}
+
 function r1Gbk(cmd) {
 
   const risky = hasWord(cmd, "wsl")
@@ -172,9 +226,9 @@ function r1Gbk(cmd) {
   return true;
 }
 
-/** R2：$var: 被解析成驱动器限定语法（需写 ${var}:）。 */
+/** R2：$var: 被解析成驱动器限定语法（需写 ${var}:）。单引号内不解析变量，所以先屏蔽。 */
 function r2VarColon(cmd) {
-  return findVars(cmd).some((v) => !v.braced && v.followedBy === ":" && !KNOWN_SCOPES.has(v.name));
+  return findVars(maskSingleQuoted(cmd)).some((v) => !v.braced && v.followedBy === ":" && !KNOWN_SCOPES.has(v.name));
 }
 
 /** R3：PS 5.1 没有三元运算符 ) ? a : b。 */
@@ -244,9 +298,9 @@ function r9CurlResume(cmd) {
   return /(^|\s)-C\s+-/.test(cmd) && /(^|\s)-L\b/.test(cmd);
 }
 
-/** R10：裸 npm/npx/pnpm 在 PS 5.1 会命中 npm.ps1 执行策略而失败。 */
+/** R10：裸 npm/npx/pnpm 在 PS 5.1 会命中 npm.ps1 执行策略而失败。只看代码区。 */
 function r10BarePackageManager(cmd) {
-  return /(^|[;&|(\s"'])(npm|npx|pnpm)(?![\w.-])/i.test(cmd);
+  return /(^|[;&|(\s])(npm|npx|pnpm)(?![\w.-])/i.test(blankQuoted(cmd));
 }
 
 /** R11：PS 5.1 没有 && / || 链式运算符（引号外的才算）。 */
@@ -469,7 +523,8 @@ export function check(text, options = {}) {
   const disabled = new Set(options.disabled || []);
   const hits = [];
   if (raw.trim().length === 0) return { hits, blocking: [], advisory: [] };
-  const cmd = maskHereStrings(raw).masked;
+  // 先屏蔽 here-string 块内的数据，再屏蔽注释；两者都不是"会被 PowerShell 执行"的代码。
+  const cmd = maskComments(maskHereStrings(raw).masked);
   for (const rule of RULES) {
     if (disabled.has(rule.id)) continue;
     let matched = false;
