@@ -258,16 +258,23 @@ test("pwsh_run：force=true 跳过检查并执行", async () => {
   assert.equal(state.spawns.length, 1);
 });
 
-test("pwsh_run：命令行装得下的脚本直接走 -Command", async () => {
+test("pwsh_run：单行脚本直接走 -Command", async () => {
   const { ctx, state } = makeHarness();
   apply(ctx, { deepCheck: "off" });
   const tool = state.tools.find((t) => t.name === "pwsh_run");
-  const long = "Write-Output 'x'\n".repeat(1000);
-  await tool.execute({ script: long, fix: false }, execWith(""));
+  await tool.execute({ script: "Write-Output 1", fix: false }, execWith(""));
   const argv = state.spawns[0].argv;
+  assert.ok(argv.includes("-Command"));
   assert.ok(!argv.includes("-EncodedCommand"));
-  const total = argv.reduce((n, part) => n + String(part).length + 3, 0);
-  assert.ok(total <= 30000, "命令行 " + total + " 字符超过 Windows 上限");
+});
+
+test("pwsh_run：多行脚本必须切 -EncodedCommand（换行过不了命令行）", async () => {
+  const { ctx, state } = makeHarness();
+  apply(ctx, { deepCheck: "off" });
+  const tool = state.tools.find((t) => t.name === "pwsh_run");
+  await tool.execute({ script: "Write-Output 1\nWrite-Output 2", fix: false }, execWith(""));
+  const argv = state.spawns[0].argv;
+  assert.ok(argv.includes("-EncodedCommand"), argv.join(" | "));
 });
 
 test("pwsh_run：超过命令行上限时明确报错且不 spawn", async () => {
@@ -453,7 +460,10 @@ test("pwsh_analyzer：install 执行安装脚本并回报结果", async () => {
   const res = await tool.execute({ action: "install" }, execWith(""));
   assert.match(res.text, /安装完成/);
   const argv = state.spawns[0].argv;
-  const script = argv[argv.length - 1];
+  // 安装脚本是多行脚本，会走 -EncodedCommand；断言要解码后再看内容。
+  const index = argv.indexOf("-EncodedCommand");
+  assert.ok(index >= 0, "多行安装脚本应走 -EncodedCommand：" + argv.join(" | "));
+  const script = Buffer.from(argv[index + 1], "base64").toString("utf16le");
   assert.match(script, /Install-Module PSScriptAnalyzer/);
   assert.match(script, /-Scope CurrentUser/);
   assert.match(script, /-Confirm:\$false/);

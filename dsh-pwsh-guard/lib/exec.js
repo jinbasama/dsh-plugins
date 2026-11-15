@@ -58,18 +58,25 @@ function argvLength(argv) {
 }
 
 /**
- * 组装 argv：脚本作为单个 -Command 参数直传。
+ * 组装 argv。
  *
- * 这里不再自动切 -EncodedCommand：base64(UTF-16LE) 是原文的 2.67 倍，
- * 编码后的命令行只会比 -Command 更长，永远装不下更多脚本，超限时只会得到
- * spawn ENAMETOOLONG 这种看不懂的报错。超限时改为明确告知处理办法。
+ * - 单行脚本：直接 -Command（可读、无膨胀）。
+ * - 含换行的脚本：必须走 -EncodedCommand。Windows 的 CreateProcess 命令行承载不了
+ *   真实换行，实测多行脚本经 -Command 传递只执行第一行且不报错。
+ * - -EncodedCommand 的容量更小（base64(UTF-16LE) 是原文 2.67 倍），超限时明确报错，
+ *   而不是抛一个 spawn ENAMETOOLONG。
  */
 export function buildPowerShellArgv(shell, script) {
-  const argv = [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script];
-  const total = argvLength(argv);
-  if (total <= MAX_COMMAND_LINE) return argv;
+  const base = [shell, "-NoLogo", "-NoProfile", "-NonInteractive"];
+  const multiline = /[\r\n]/.test(script);
+  if (!multiline) {
+    const inline = base.concat(["-Command", script]);
+    if (argvLength(inline) <= MAX_COMMAND_LINE) return inline;
+  }
+  const encoded = base.concat(["-EncodedCommand", toEncodedCommand(script)]);
+  if (argvLength(encoded) <= MAX_COMMAND_LINE) return encoded;
   throw new Error(
-    "脚本过长：整条命令行约 " + total + " 字符，超过 Windows 上限 " + MAX_COMMAND_LINE
+    "脚本过长：多行脚本编码后约 " + argvLength(encoded) + " 字符，超过 Windows 上限 " + MAX_COMMAND_LINE
       + "。请把脚本写成 .ps1 文件再执行，或拆成多次调用。"
   );
 }
