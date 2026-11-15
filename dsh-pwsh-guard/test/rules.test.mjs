@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { check, RULES } from "../lib/rules.js";
+import { check, compileCustomRules, RULES } from "../lib/rules.js";
 
 /** 断言某条规则命中。 */
 function hits(cmd, id) {
@@ -190,4 +190,38 @@ test("合法作用域前缀与 here-string 里的数据仍然放行", () => {
   clean('Write-Output "$env:PATH"');
   clean("$script:x = 1");
   clean("@'\n$name: hi\n'@");
+});
+
+// —— 外部声明式规则（rules/custom.json）——
+
+test("外部规则：合法声明可编译并参与 check", () => {
+  const rules = compileCustomRules([
+    { id: "X99", level: "advisory", pattern: "FOO_BAR", title: { zh: "t", en: "t" }, fix: { zh: "f", en: "f" } },
+  ]);
+  assert.equal(rules.length, 1);
+  const r = check("Write-Output FOO_BAR", { extraRules: rules });
+  assert.ok(r.advisory.some((h) => h.id === "X99"));
+});
+
+test("外部规则：scope=code 不匹配引号内文本，scope=raw 匹配", () => {
+  const codeScope = compileCustomRules([{ id: "X98", pattern: "FOO_BAR" }]);
+  const rawScope = compileCustomRules([{ id: "X97", pattern: "FOO_BAR", scope: "raw" }]);
+  assert.equal(check("Write-Output 'FOO_BAR'", { extraRules: codeScope }).hits.length, 0);
+  assert.ok(check("Write-Output 'FOO_BAR'", { extraRules: rawScope }).hits.some((h) => h.id === "X97"));
+});
+
+test("外部规则：冲突 id / 坏正则 / 超长 pattern / 非法 id 都会被丢弃", () => {
+  const rules = compileCustomRules([
+    { id: "R2", pattern: "x" },
+    { id: "X96", pattern: "(" },
+    { id: "X95", pattern: "a".repeat(501) },
+    { id: "bad id", pattern: "x" },
+  ]);
+  assert.equal(rules.length, 0);
+});
+
+test("外部规则：blocking 级别能进 blocking 分组", () => {
+  const rules = compileCustomRules([{ id: "X94", level: "blocking", pattern: "DANGER_TOKEN" }]);
+  const r = check("Write-Output DANGER_TOKEN", { extraRules: rules });
+  assert.ok(r.blocking.some((h) => h.id === "X94"));
 });

@@ -15,6 +15,8 @@
   },
   "files": [
     "lib",
+    "rules",
+    "scripts",
     "test",
     "SKILL.md",
     "cordis.patch.yml",
@@ -32,6 +34,7 @@
   },
   "scripts": {
     "test": "node --test test/rules.test.mjs test/fixer.test.mjs test/plugin.test.mjs test/ast.test.mjs test/background.test.mjs test/danger.test.mjs test/audit.test.mjs",
+    "validate": "node scripts/validate-rules.mjs",
     "check": "node --check lib/rules.js && node --check lib/fixer.js && node --check lib/exec.js && node --check lib/index.js"
   },
   "keywords": [

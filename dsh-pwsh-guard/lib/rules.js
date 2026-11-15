@@ -512,10 +512,59 @@ export const RULES = [
 /* 对外 API                                                            */
 /* ------------------------------------------------------------------ */
 
+const CUSTOM_ID = /^[A-Za-z][A-Za-z0-9_-]{1,31}$/;
+const MAX_CUSTOM_PATTERN = 500;
+
+/**
+ * 把外部声明的规则（rules/custom.json）编译成可执行规则。
+ *
+ * 设计约束：
+ * - 不能覆盖内置规则 id，避免维护时互相打架；
+ * - 默认只匹配"代码区"（blankQuoted 之后的文本），注释/here-string 已在 check 里屏蔽，
+ *   这样新加的坑不会一上来就误报单引号里的示例文字；
+ * - 正则长度设上限，且编译失败的单条规则被跳过而不是让整张表失效。
+ */
+export function compileCustomRules(specs) {
+  const out = [];
+  const list = Array.isArray(specs) ? specs : [];
+  for (const spec of list) {
+    if (spec === null || typeof spec !== "object") continue;
+    if (typeof spec.id !== "string" || !CUSTOM_ID.test(spec.id)) continue;
+    if (RULES.some((rule) => rule.id === spec.id)) continue;
+    if (typeof spec.pattern !== "string" || spec.pattern.length === 0) continue;
+    if (spec.pattern.length > MAX_CUSTOM_PATTERN) continue;
+    let re;
+    try {
+      const flags = typeof spec.flags === "string" ? spec.flags.replace(/[^imsu]/g, "") : "";
+      re = new RegExp(spec.pattern, flags);
+    } catch {
+      continue;
+    }
+    const scope = spec.scope === "raw" ? "raw" : "code";
+    const level = spec.level === "blocking" ? "blocking" : "advisory";
+    const titleZh = typeof spec.title?.zh === "string" ? spec.title.zh : spec.id;
+    const titleEn = typeof spec.title?.en === "string" ? spec.title.en : titleZh;
+    const fixZh = typeof spec.fix?.zh === "string" ? spec.fix.zh : "";
+    const fixEn = typeof spec.fix?.en === "string" ? spec.fix.en : fixZh;
+    out.push({
+      id: spec.id,
+      level,
+      title: { zh: titleZh, en: titleEn },
+      fix: { zh: fixZh, en: fixEn },
+      custom: true,
+      test(text) {
+        const target = scope === "raw" ? text : blankQuoted(text);
+        return re.test(target);
+      },
+    });
+  }
+  return out;
+}
+
 /**
  * 静态检查一段 PowerShell 文本。
  * @param {string} text 命令或脚本
- * @param {{ disabled?: string[] }} [options] 需要跳过的规则 id
+ * @param {{ disabled?: string[], extraRules?: Array }} [options] 跳过的规则 id 与外部规则
  * @returns {{ hits: Array, blocking: Array, advisory: Array }}
  */
 export function check(text, options = {}) {
@@ -525,7 +574,9 @@ export function check(text, options = {}) {
   if (raw.trim().length === 0) return { hits, blocking: [], advisory: [] };
   // 先屏蔽 here-string 块内的数据，再屏蔽注释；两者都不是"会被 PowerShell 执行"的代码。
   const cmd = maskComments(maskHereStrings(raw).masked);
-  for (const rule of RULES) {
+  const extra = Array.isArray(options.extraRules) ? options.extraRules : [];
+  const activeRules = extra.length > 0 ? RULES.concat(extra) : RULES;
+  for (const rule of activeRules) {
     if (disabled.has(rule.id)) continue;
     let matched = false;
     try {

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "X01",
+    "level": "advisory",
+    "scope": "code",
+    "pattern": "\\$PSVersionTable\\.PSVersion\\s*\\+",
+    "flags": "i",
+    "title": {
+      "zh": "PSVersion 在 PowerShell 7 里是 SemanticVersion，不能直接与字符串相加",
+      "en": "PSVersion is a SemanticVersion on PowerShell 7 and cannot be concatenated with a string"
+    },
+    "fix": {
+      "zh": "写成 \"$($PSVersionTable.PSVersion)\" 或 .ToString()",
+      "en": "Use \"$($PSVersionTable.PSVersion)\" or .ToString()"
+    },
+    "expect": {
+      "match": [
+        "$PSVersionTable.PSVersion + \" \" + \"x\""
+      ],
+      "clean": [
+        "\"$($PSVersionTable.PSVersion)\"",
+        "$PSVersionTable.PSVersion.ToString()"
+      ]
+    }
+  }
+]

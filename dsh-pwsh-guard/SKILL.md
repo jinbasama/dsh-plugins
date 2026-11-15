@@ -108,3 +108,19 @@ pwsh_check: script = "npm install x && ls -la", fix = true
 
 - 若配置了 `takeover: replace`，内置 `pwsh` 工具在本会话里**不可见**：PowerShell 一律用 `pwsh_run`，原生程序用 `run_argv`，查错用 `pwsh_check`。看不到 `pwsh` 不是故障，是接管生效。
 - `pwsh_analyzer { action: "status" }` 查看 PSScriptAnalyzer 是否安装；`{ action: "install" }` 一键安装（当前用户范围，需要能访问 PSGallery）。安装后在 `pwsh_check` / `pwsh_run` 里启用 `analyzer: psscriptanalyzer` 即可获得官方规则检查。
+
+## 8. 发现新坑后的沉淀（必做）
+
+规则表是这份技能的机械形态：**它只会被跑，不会被读**。所以任何一次「低级错误」修完——语法写错、踩了 5.1/7 差异、被修复器改错、输出被截断——都要落成一条规则，而不是记在心里。
+
+顺序：
+
+1. **能正则描述** → 追加到 `rules/custom.json`（字段见 `rules/README.md`），必须同时写 `expect.match` 与 `expect.clean`；
+2. **需要上下文判断**（引号内外、块结构、AST）→ 写进 `lib/rules.js` 的内置规则，并补 `test/rules.test.mjs`；
+3. 跑 `node scripts/validate-rules.mjs` 与 `npm test`，两者都过才算补完；
+4. 唯一可以不补的例外：一次性、无法复现的判断失误。
+
+补规则时的两条约束：
+
+- 先有反例再加规则。没有 `clean` 用例的规则先别加——本插件历史上最大的问题就是规则误报把正常命令拦了。
+- 规则命中要能解释「为什么这条会出错」，而不是「看起来像坏味道」。写不出原因的，说明还没定位到真实机制。

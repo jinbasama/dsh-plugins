@@ -14,8 +14,9 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { check, formatHits } from "./rules.js";
+import { check, compileCustomRules, formatHits } from "./rules.js";
 import { fix, formatNotes } from "./fixer.js";
 import { runPowerShell, runProcess, resolveCwd, DEFAULT_TIMEOUT_MS } from "./exec.js";
 import { deepCheck, formatAstErrors, formatPssaFindings } from "./ast.js";
@@ -29,6 +30,24 @@ export const inject = ["tools", "skills", "subprocess"];
 const PROVIDER_NAME = "dsh-pwsh-guard";
 const SKILL_URL = new URL("../SKILL.md", import.meta.url);
 const RESOURCE_BASE = { kind: "directory", path: fileURLToPath(new URL("../", import.meta.url)) };
+
+const CUSTOM_RULES_URL = new URL("../rules/custom.json", import.meta.url);
+
+/**
+ * 读取外部声明式规则（rules/custom.json）。
+ * 发现新坑时往那里追加一条，不必改 JS；文件缺失或格式错误时退回空表，不让整张规则表失效。
+ */
+function loadCustomRules() {
+  const file = process.env.DSH_GUARD_RULES_FILE || fileURLToPath(CUSTOM_RULES_URL);
+  try {
+    if (!existsSync(file)) return [];
+    const data = JSON.parse(readFileSync(file, "utf8"));
+    const specs = Array.isArray(data) ? data : data && Array.isArray(data.rules) ? data.rules : [];
+    return compileCustomRules(specs);
+  } catch {
+    return [];
+  }
+}
 
 const CANDIDATE = {
   name: "pwsh-guard",
@@ -184,6 +203,8 @@ function reportNotes(notes, lang) {
 export function apply(ctx, config = {}) {
   const cfg = normalizeConfig(config);
   const zh = cfg.lang !== "en";
+  // 外部声明式规则（rules/custom.json）：补新坑时不改 JS、不重新打包。
+  const extraRules = loadCustomRules();
 
   // --- 1) 教学：注册 pwsh-guard skill ---
   try {
@@ -200,7 +221,7 @@ export function apply(ctx, config = {}) {
     const command = commandOf(exec);
     if (command.trim().length === 0) return next();
 
-    const result = check(command, { disabled: cfg.disabled });
+    const result = check(command, { disabled: cfg.disabled, extraRules });
     if (result.blocking.length === 0) {
       if (cfg.deepCheck === "all") {
         const deep = await deepCheck(ctx, exec, command, { pssa: cfg.analyzer === "psscriptanalyzer", shell: cfg.shell });
@@ -301,7 +322,7 @@ export function apply(ctx, config = {}) {
       if (fixed.notes.length > 0) {
         appendAudit({ event: "fix", transforms: fixed.notes.map((n) => n.id), agent: agentIdOf(exec), command: clipCommand(fixed.text) });
       }
-      const result = check(fixed.text, { disabled: cfg.disabled });
+      const result = check(fixed.text, { disabled: cfg.disabled, extraRules });
       const header = [];
       if (fixed.notes.length > 0) {
         header.push(reportNotes(fixed.notes, cfg.lang));
@@ -396,7 +417,7 @@ export function apply(ctx, config = {}) {
     execute: async (args, exec) => {
       const script = args && args.script;
       if (typeof script !== "string" || script.trim().length === 0) throw new Error("script 必须是非空字符串");
-      const result = check(script, { disabled: cfg.disabled });
+      const result = check(script, { disabled: cfg.disabled, extraRules });
       const lines = [];
       if (cfg.deepCheck !== "off") {
         const deep = await deepCheck(ctx, exec, script, { pssa: cfg.analyzer === "psscriptanalyzer", shell: cfg.shell });
