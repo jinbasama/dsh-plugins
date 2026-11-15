@@ -27,3 +27,14 @@ dsh-pwsh-guard 的规则表、修复策略与执行形态融合自以下公开�
 | lib/rules.js | KNOWN_SCOPES 移除 12 个自动变量 | `$PID` / `$args` / `$_` 等不是作用域前缀，白名单导致 R2 漏报 |
 | cordis.patch.yml | 默认 `mode: warn`、`analyzer: builtin`、`takeover: off` | 原 bundle 默认 deny/replace 会立即接管并拦截，与 README 声明的默认值矛盾 |
 | test/ | 沙箱假实现改为 async；补 fail-closed、命令行长度、引号与注释用例 | 旧的同步假实现掩盖了沙箱缺陷，测试全绿不代表契约正确 |
+
+### 第二批（P1）
+
+| 文件 | 改动 | 原因 |
+| --- | --- | --- |
+| lib/fixer.js | `&&` / `||` 链改为逐段把 `$?` 存进 `$__dsh_guard_ok` | 原写法 `a; if ($?) { b }; if (-not $?) { c }` 里第二个 `$?` 已被 if 刷新，`||` 分支永远不执行 |
+| lib/fixer.js | `shimIfBlock` 支持块内多条语句；`splitTopLevelSemicolons` 追踪大括号深度 | 否则链拆分产生的 if 块内命令不会被 shim（如 `ls -la .` 漏转） |
+| lib/fixer.js | `export` / `unset` 正则补 `m` 标志 | 多行脚本里非首行的 export/unset 被静默漏转，转化结果是语法错误 |
+| lib/danger.js | 补 `ri` 别名、盘符通配符（`C:\Us*`）、`[IO.Directory]::Delete` 三条绕过 | 原词表与 ROOTISH 字面量都拦不住这三类 |
+| lib/index.js | system prompt `order: 108` → `1010` | 108 会挤进 persona 区并排在内置工具说明之前，且每请求常驻 |
+| lib/audit.js | 4MB 轮转（保留一代）+ 尾部窗口读取 | 原实现无上限、无轮转，`readAuditTail` 每次全量读入内存 |

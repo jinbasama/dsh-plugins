@@ -103,7 +103,7 @@ test("闸门：阻断级命令 deny，并给出规则与修复命令", async () 
   const decision = await state.gate(execWith("git add . && git commit -m x"), () => ({ kind: "allow" }));
   assert.equal(decision.kind, "deny");
   assert.match(decision.reason, /R11/);
-  assert.match(decision.reason, /if \(\$\?\)/);
+  assert.match(decision.reason, /\$__dsh_guard_ok/);
   assert.match(decision.reason, /pwsh_run/);
 });
 

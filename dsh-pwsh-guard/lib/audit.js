@@ -6,11 +6,17 @@
  * 约束：任何写入/读取失败都不得影响主流程；命令片段截断到 300 字符。
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const MAX_COMMAND = 300;
+/** 单个审计文件的上限；超过后轮转为 audit.jsonl.1（只保留一代）。 */
+const MAX_AUDIT_BYTES = 4 * 1024 * 1024;
+/** 读取尾部时最多读这么多字节，避免大文件全量进内存。 */
+const TAIL_READ_BYTES = 512 * 1024;
 
 /** 审计文件路径（每次调用时解析，便于测试注入 DSH_HOME）。 */
 export function auditFilePath() {
@@ -25,12 +31,24 @@ export function clipCommand(text) {
   return value.length > MAX_COMMAND ? value.slice(0, MAX_COMMAND) + "..." : value;
 }
 
+/** 超过上限时轮转一次（旧文件改名保留，不删除）。 */
+function rotateIfNeeded(file) {
+  try {
+    if (!existsSync(file)) return;
+    if (statSync(file).size < MAX_AUDIT_BYTES) return;
+    renameSync(file, file + ".1");
+  } catch {
+    /* 轮转失败不影响写入 */
+  }
+}
+
 /** 追加一条审计记录（失败静默；DSH_GUARD_NO_AUDIT=1 时跳过，供测试隔离）。 */
 export function appendAudit(entry) {
   if (process.env.DSH_GUARD_NO_AUDIT === "1") return;
   try {
     const file = auditFilePath();
     mkdirSync(dirname(file), { recursive: true });
+    rotateIfNeeded(file);
     appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n", "utf8");
   } catch {
     /* 审计失败不影响主流程 */
@@ -42,10 +60,28 @@ export function readAuditTail(limit = 50) {
   try {
     const file = auditFilePath();
     if (!existsSync(file)) return [];
-    const lines = readFileSync(file, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0);
-    const size = Math.min(Math.max(1, Math.floor(limit)), lines.length);
+    let text;
+    const size = statSync(file).size;
+    if (size > TAIL_READ_BYTES) {
+      // 只读尾部窗口；首行可能被截断，直接丢掉，避免解析半个 JSON。
+      const offset = size - TAIL_READ_BYTES;
+      const buffer = Buffer.alloc(TAIL_READ_BYTES);
+      const fd = openSync(file, "r");
+      try {
+        readSync(fd, buffer, 0, TAIL_READ_BYTES, offset);
+      } finally {
+        closeSync(fd);
+      }
+      const chunk = buffer.toString("utf8");
+      const firstBreak = chunk.indexOf("\n");
+      text = firstBreak >= 0 ? chunk.slice(firstBreak + 1) : chunk;
+    } else {
+      text = readFileSync(file, "utf8");
+    }
+    const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const take = Math.min(Math.max(1, Math.floor(limit)), lines.length);
     const out = [];
-    for (const line of lines.slice(-size)) {
+    for (const line of lines.slice(-take)) {
       try {
         out.push(JSON.parse(line));
       } catch {

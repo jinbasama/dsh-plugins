@@ -597,7 +597,8 @@ export function apply(ctx, config = {}) {
   if (systemPrompt !== undefined && typeof systemPrompt.section === "function") {
     systemPrompt.section({
       name: "dsh-pwsh-guard",
-      order: 108,
+      // 中央位置表里 TOOL_PWSH = 1010；用 108 会挤进 persona 区并排在内置工具说明之前。
+      order: 1010,
       text: (cfg.takeover === "replace"
         ? "本 profile 已接管 shell：pwsh 工具已隐藏，PowerShell 一律用 pwsh_run 执行（自动 UTF-8、自动修复、静态检查），原生程序用 run_argv，查错用 pwsh_check。"
         : "Windows 上的 PowerShell 命令优先用 pwsh_run 执行（自动 UTF-8、自动修复 bash 风格、走同一沙箱）；给原生程序传参用 run_argv；直接用 pwsh 工具时会被 dsh-pwsh-guard 静态检查，命中坑位会返回修复建议而不是执行。"),

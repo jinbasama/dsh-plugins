@@ -10,6 +10,10 @@ const DANGEROUS = [
   ["Remove-Item $env:USERPROFILE -Recurse -Force", "recursiveDelete"],
   ["Remove-Item C:\\Users -Recurse -Force", "recursiveDelete"],
   ["rd /s /q C:\\Windows", "recursiveDelete"],
+  // 别名与通配符不能成为绕过路径。
+  ["ri -Recurse -Force $env:USERPROFILE", "recursiveDelete"],
+  ["Remove-Item C:\\Us* -Recurse -Force", "recursiveDelete"],
+  ['[System.IO.Directory]::Delete("C:\\Users", $true)', "recursiveDelete"],
   ["Format-Volume -DriveLetter D", "disk"],
   ["Clear-Disk -Number 1 -RemoveData", "disk"],
   ["diskpart", "disk"],

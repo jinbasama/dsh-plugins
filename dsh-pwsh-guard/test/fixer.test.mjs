@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { fix } from "../lib/fixer.js";
 
 const CASES = [
@@ -51,13 +52,23 @@ test("正确 PowerShell 原样通过", () => {
   }
 });
 
-test("&& / || 链拆分并逐段 shim", () => {
+test("&& / || 链拆分：逐段捕获状态，|| 分支不再是死代码", () => {
   const r1 = fix("git add . && git commit -m x");
-  assert.equal(r1.text, 'git add .; if ($?) { git commit -m x }');
+  assert.ok(r1.text.includes("$__dsh_guard_ok = $?"), r1.text);
+  assert.ok(r1.text.includes("if ($__dsh_guard_ok)"), r1.text);
+  assert.ok(!r1.text.includes("if ($?)"), "不应再生成读旧 $? 的 if 块：" + r1.text);
   const r2 = fix("npm install x && ls -la .");
-  assert.equal(r2.text, "npm.cmd install x; if ($?) { Get-ChildItem . -Force }");
+  assert.ok(r2.text.includes("npm.cmd install x"), r2.text);
+  assert.ok(r2.text.includes("Get-ChildItem . -Force"), r2.text);
   const r3 = fix("rm -rf a || ls -la");
-  assert.equal(r3.text, "Remove-Item a -Recurse -Force; if (-not $?) { Get-ChildItem -Force }");
+  assert.ok(r3.text.includes("if (-not $__dsh_guard_ok)"), r3.text);
+  assert.ok(r3.text.includes("Remove-Item a -Recurse -Force"), r3.text);
+});
+
+test("&& / || 拆分在真实 PS 5.1 下的语义与 bash 一致", { skip: process.platform !== "win32" }, () => {
+  const script = fix("cmd /c exit 1 || Write-Output RAN").text;
+  const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+  assert.match(out, /RAN/, "|| 分支应在前一段失败时执行，实际输出：" + out);
 });
 
 test("继续符处理", () => {

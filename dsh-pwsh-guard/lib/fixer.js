@@ -192,7 +192,9 @@ function rewriteOutside(text, pattern, replacer) {
 function envExport(text) {
   const names = new Set();
   let touched = false;
-  const pattern = /(^|[;&|]\s*)export\s+([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S+)/g;
+  // m 标志必带：多行脚本里的 export 不在首行，没有 m 时 ^ 只匹配整个字符串开头，
+  // 中间行的 export 会被静默漏转，转换出来的脚本在 PowerShell 里是语法错误。
+  const pattern = /(^|[;&|]\s*)export\s+([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S+)/gm;
   let out = text.replace(pattern, (match, prefix, name, raw) => {
     touched = true;
     names.add(name);
@@ -215,7 +217,7 @@ function envExport(text) {
 
 function envUnset(text) {
   let touched = false;
-  const out = text.replace(/(^|[;&|]\s*)unset\s+([A-Za-z_][A-Za-z0-9_]*)/g, (match, prefix, name) => {
+  const out = text.replace(/(^|[;&|]\s*)unset\s+([A-Za-z_][A-Za-z0-9_]*)/gm, (match, prefix, name) => {
     touched = true;
     return prefix + "if (Test-Path Env:" + name + ") { Remove-Item Env:" + name + " }";
   });
@@ -249,11 +251,16 @@ function splitChainsInLine(line) {
   }
   segments.push(line.slice(prev));
   let result = segments[0].trim();
+  if (result.length === 0) return null;
+  // 链式状态必须逐段落盘。写成 a; if ($?) { b }; if (-not $?) { c } 时，
+  // 第一个 if 语句执行完会刷新 $?，于是 || 分支永远拿不到 a 的结果、成为死代码。
+  const STATE = "$__dsh_guard_ok";
+  result += "; " + STATE + " = $?";
   for (let i = 0; i < ops.length; i++) {
     const seg = segments[i + 1].trim();
     if (seg.length === 0) continue;
-    const cond = ops[i].op === "&&" ? "if ($?)" : "if (-not $?)";
-    result += "; " + cond + " { " + seg + " }";
+    const cond = ops[i].op === "&&" ? "if (" + STATE + ")" : "if (-not " + STATE + ")";
+    result += "; " + cond + " { " + seg + "; " + STATE + " = $? }";
   }
   return result;
 }
@@ -385,25 +392,37 @@ function noteUnsupported(text) {
   return notes.length > 0 ? { notes } : undefined;
 }
 
-/** 顶层分号切分（不追踪大括号，够用即可）。 */
+/** 顶层分号切分：追踪大括号深度，避免把 if 块内部的语句切开。 */
 function splitTopLevelSemicolons(line) {
   const parts = [];
   let start = 0;
+  let depth = 0;
   eachOutsideQuotes(line, (i, c) => {
-    if (c === ";") { parts.push(line.slice(start, i)); start = i + 1; }
+    if (c === "{") { depth++; return false; }
+    if (c === "}") { depth = Math.max(0, depth - 1); return false; }
+    if (c === ";" && depth === 0) { parts.push(line.slice(start, i)); start = i + 1; }
     return false;
   });
   parts.push(line.slice(start));
   return parts;
 }
 
-/** 处理 if ($?) { <bash command> } 这类块内单命令。 */
+/** 处理 if ($?) { <bash command>; <状态赋值> } 这类块内命令（块内可能有多条语句）。 */
 function shimIfBlock(line) {
   const m = line.match(/^(\s*if\s*\([^)]*\)\s*\{\s*)([^{}]*?)(\s*\}\s*;?\s*)$/);
   if (!m) return null;
-  const inner = shimCommandLine(m[2].trim());
-  if (!inner) return null;
-  return { line: m[1] + inner.line + m[3], note: inner.note };
+  const parts = splitTopLevelSemicolons(m[2].trim());
+  const notes = [];
+  let changed = false;
+  const rebuilt = parts.map((part) => {
+    const inner = shimCommandLine(part.trim());
+    if (!inner) return part.trim();
+    changed = true;
+    notes.push(inner.note);
+    return inner.line;
+  });
+  if (!changed) return null;
+  return { line: m[1] + rebuilt.join("; ") + m[3], notes };
 }
 
 /** 先整行、再分号分段、再 if 块内命令。 */
@@ -422,7 +441,7 @@ function shimLine(line) {
     if (changed) return { line: rebuilt.join("; "), notes };
   }
   const block = shimIfBlock(line);
-  if (block) return { line: block.line, notes: [block.note] };
+  if (block) return { line: block.line, notes: block.notes };
   return null;
 }
 function shimCommands(text) {

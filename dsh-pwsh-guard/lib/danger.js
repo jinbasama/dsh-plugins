@@ -34,6 +34,8 @@ const ROOTISH = [
   /(^|[\s"'=(])\/(?=\s|$|["'])/,
   /(^|[\s"'=(])[A-Za-z]:[\\/](?=\s|$|["']|\*)/,
   /(^|[\s"'=(])[A-Za-z]:[\\/]\*/,
+  // 盘符下的通配符路径：Remove-Item C:\Us* 与 C:\* 一样会命中用户目录。
+  /(^|[\s"'=(])[A-Za-z]:\\[^\\\s"']*\*/,
   /(^|[\s"'=(])~(?:[\\/])?(?=\s|$|["'])/,
   /\$(?:env:)?(?:USERPROFILE|HOME|SystemRoot|windir|ProgramFiles|ProgramData|LOCALAPPDATA|APPDATA)\b/i,
   /%(?:USERPROFILE|SystemRoot|windir|ProgramFiles|ProgramData|LOCALAPPDATA|APPDATA)%/i,
@@ -43,7 +45,11 @@ const ROOTISH = [
 ];
 
 function recursiveDeleteAgainstRoot(text) {
-  if (!/\b(Remove-Item|rm|rd|rmdir|del)\b/i.test(text)) return false;
+  // .NET 直接删目录/文件完全绕过 cmdlet 与 -Recurse 语义，单独识别且不受后面的
+  // "必须带 -Recurse/-Force" 条件约束（[IO.Directory]::Delete(dir, true) 就是递归删）。
+  if (/\[(?:System\.)?IO\.(?:Directory|File)\]\s*::\s*Delete\b/i.test(text)) return true;
+  // ri 是 Remove-Item 的官方别名，词表里漏掉它等于给了一条绕过路径。
+  if (!/\b(Remove-Item|ri|rm|rd|rmdir|del)\b/i.test(text)) return false;
   const recursive = /-(?:Recurse|r|rf|fr)\b/i.test(text) || /\/s\b/i.test(text);
   const forced = /-(?:Force|f)\b/i.test(text) || /\/q\b/i.test(text);
   if (!recursive && !forced) return false;
