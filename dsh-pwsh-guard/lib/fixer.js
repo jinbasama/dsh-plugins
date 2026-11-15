@@ -275,7 +275,7 @@ function splitChains(text) {
     return fixed;
   });
   if (!changed) return undefined;
-  return { text: joinLines(out), notes: [{ id: "AND_OR_CHAIN", zh: "&& / || 链拆成 PS 5.1 可执行的 if ($?) 形式", en: "Split && / || chains into PS 5.1-safe if ($?) form" }] };
+  return { text: joinLines(out), notes: [{ id: "AND_OR_CHAIN", zh: "&& / || 链拆成逐段记录 $? 的 if 形式", en: "Split && / || chains into per-segment $? branches" }] };
 }
 /* ------------------------------------------------------------------ */
 /* 命令 shim：常见 bash 命令 -> PowerShell cmdlet                       */
